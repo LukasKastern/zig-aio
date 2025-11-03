@@ -475,12 +475,8 @@ pub fn Uringlator(BackendOperation: type) type {
         }
 
         pub fn debug(comptime fmt: []const u8, args: anytype) void {
-            if (@import("builtin").is_test) {
-                std.debug.print("uringlator: " ++ fmt ++ "\n", args);
-            } else {
-                if (comptime !aio.options.debug) return;
-                log.debug(fmt, args);
-            }
+            if (comptime !aio.options.debug) return;
+            log.debug(fmt, args);
         }
     };
 }
