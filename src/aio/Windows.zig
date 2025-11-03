@@ -281,12 +281,12 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
             const flags = try getHandleAccessInfo(state.read.file.handle);
             if (flags.FILE_READ_DATA != 1) return self.uringlator.finish(self, id, error.NotOpenForReading, .thread_unsafe);
-            const h = fs.ReOpenFile(state.read.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
-            _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            ovl.* = .{ .overlapped = ovlOff(state.read.offset), .owned = .{ .handle = h.? } };
+            // const h = fs.ReOpenFile(state.read.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
+            // _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            // self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            ovl.* = .{ .overlapped = ovlOff(state.read.offset), .owned = .{ .handle = state.read.file.handle } };
             var read: u32 = undefined;
-            const ret = wtry(fs.ReadFile(h.?, state.read.buffer.ptr, @intCast(state.read.buffer.len), &read, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            const ret = wtry(fs.ReadFile(state.read.file.handle, state.read.buffer.ptr, @intCast(state.read.buffer.len), &read, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             if (ret != 0) {
                 ovl.res = read;
                 self.uringlator.finish(self, id, error.Success, .thread_unsafe);
@@ -295,14 +295,14 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
         .write => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
-            const flags = try getHandleAccessInfo(state.write.file.handle);
-            if (flags.FILE_WRITE_DATA != 1) return self.uringlator.finish(self, id, error.NotOpenForWriting, .thread_unsafe);
-            const h = fs.ReOpenFile(state.write.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
-            _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            ovl.* = .{ .overlapped = ovlOff(state.write.offset), .owned = .{ .handle = h.? } };
+            // const flags = try getHandleAccessInfo(state.write.file.handle);
+            // if (flags.FILE_WRITE_DATA != 1) return self.uringlator.finish(self, id, error.NotOpenForWriting, .thread_unsafe);
+            // const h = fs.ReOpenFile(state.write.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
+            // _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            // self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            ovl.* = .{ .overlapped = ovlOff(state.write.offset), .owned = .{ .handle = state.write.file.handle } };
             var written: u32 = undefined;
-            const ret = wtry(fs.WriteFile(h.?, state.write.buffer.ptr, @intCast(state.write.buffer.len), &written, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            const ret = wtry(fs.WriteFile(state.write.file.handle, state.write.buffer.ptr, @intCast(state.write.buffer.len), &written, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             if (ret != 0) {
                 ovl.res = written;
                 self.uringlator.finish(self, id, error.Success, .thread_unsafe);
