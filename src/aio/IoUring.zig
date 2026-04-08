@@ -872,10 +872,6 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
 }
 
 fn debug(comptime fmt: []const u8, args: anytype) void {
-    if (@import("builtin").is_test) {
-        std.debug.print("io_uring: " ++ fmt ++ "\n", args);
-    } else {
-        if (comptime !aio.options.debug) return;
-        log.debug(fmt, args);
-    }
+    if (comptime !aio.options.debug) return;
+    log.debug(fmt, args);
 }
