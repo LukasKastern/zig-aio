@@ -26,9 +26,9 @@ pub fn wtry(ret: anytype) !@TypeOf(ret) {
         else => ret,
     };
     if (wbool == 0) {
-        switch (GetLastError()) {
-            .ERROR_IO_PENDING => {}, // not error
-            else => |r| return unexpectedError(r),
+        const err = std.os.windows.GetLastError();
+        if (err != .IO_PENDING) {
+            return std.os.windows.unexpectedError(err);
         }
     }
     return ret;
