@@ -5,8 +5,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const sanitize = b.option(bool, "sanitize", "use sanitizers when running examples or tests") orelse false;
-    const single_threaded = b.option(bool, "single-threaded", "use only a single thread") orelse null;
+    const dep = b.option(bool, "dependency", "build the module as a dependency") orelse false;
+
+    // Nothing to do if we are a dependency
+    if (dep) {
+        return;
+    }
 
     var aio_opts = b.addOptions();
     {
@@ -20,12 +24,6 @@ pub fn build(b: *std.Build) void {
         const WasiMode = enum { wasi, wasix };
         const wasi = b.option(WasiMode, "aio:wasi", "wasi mode") orelse .wasi;
         aio_opts.addOption(WasiMode, "wasi", wasi);
-    }
-
-    var coro_opts = b.addOptions();
-    {
-        const debug = b.option(bool, "coro:debug", "enable debug prints") orelse false;
-        coro_opts.addOption(bool, "debug", debug);
     }
 
     const minilib = b.addModule("minilib", .{
@@ -51,120 +49,6 @@ pub fn build(b: *std.Build) void {
         if (b.lazyDependency("zigwin32", .{})) |zigwin32| {
             aio.addImport("win32", zigwin32.module("win32"));
         }
-    }
-
-    const coro = b.addModule("coro", .{
-        .root_source_file = b.path("src/coro.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    coro.addImport("minilib", minilib);
-    coro.addImport("aio", aio);
-    coro.addImport("build_options", coro_opts.createModule());
-
-    const run_all = b.step("example", "Run all examples");
-    inline for (.{
-        .aio_dynamic,
-        .aio_immediate,
-        .coro,
-        .coro_wttr,
-    }) |example| {
-        const os = target.query.os_tag orelse builtin.os.tag;
-        const exe = b.addExecutable(.{
-            .name = @tagName(example),
-            .root_source_file = b.path("examples/" ++ @tagName(example) ++ ".zig"),
-            .target = target,
-            .optimize = optimize,
-            .sanitize_thread = sanitize,
-            .single_threaded = if (example == .coro_wttr and os != .wasi) false else single_threaded,
-            .strip = false,
-        });
-        exe.root_module.addImport("aio", aio);
-        exe.root_module.addImport("coro", coro);
-        const install = b.addInstallArtifact(exe, .{ .dest_dir = .{ .override = .{ .custom = "example" } } });
-        b.getInstallStep().dependOn(&install.step);
-        var cmd = makeRunStep(b, target, exe, "example:" ++ @tagName(example), "Run " ++ @tagName(example) ++ " example", .{});
-        run_all.dependOn(&cmd.step);
-    }
-
-    const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match any filter") orelse "";
-    const test_step = b.step("test", "Run unit tests");
-    inline for (.{ .minilib, .aio, .coro }) |mod| {
-        const tst = b.addTest(.{
-            .root_source_file = b.path("src/" ++ @tagName(mod) ++ ".zig"),
-            .target = target,
-            .optimize = optimize,
-            .filters = &.{test_filter},
-            .link_libc = aio.link_libc,
-            .sanitize_thread = sanitize,
-            .single_threaded = single_threaded,
-            .strip = false,
-        });
-        switch (mod) {
-            .minilib => addImportsFrom(tst.root_module, minilib),
-            .aio => addImportsFrom(tst.root_module, aio),
-            .coro => addImportsFrom(tst.root_module, coro),
-            else => unreachable,
-        }
-        var cmd = makeRunStep(b, target, tst, "test:" ++ @tagName(mod), "Run " ++ @tagName(mod) ++ " tests", .{});
-        test_step.dependOn(&cmd.step);
-    }
-
-    const bug_step = b.step("bug", "Run regression tests");
-    inline for (.{
-        .@"22",
-        .@"31",
-        .@"33",
-        .@"67",
-        .ticker,
-        .backend_override,
-    }) |bug| {
-        const exe = b.addExecutable(.{
-            .name = @tagName(bug),
-            .root_source_file = b.path("bugs/" ++ @tagName(bug) ++ ".zig"),
-            .target = target,
-            .optimize = switch (bug) {
-                // fails on io_uring if sanitize == true and optimize == debug, not sure why
-                .ticker => if (sanitize) .ReleaseFast else optimize,
-                else => optimize,
-            },
-            .sanitize_thread = sanitize,
-            .single_threaded = single_threaded,
-            .strip = false,
-        });
-        exe.root_module.addImport("aio", aio);
-        exe.root_module.addImport("coro", coro);
-        var cmd = makeRunStep(b, target, exe, "bug:" ++ @tagName(bug), "Check regression for #" ++ @tagName(bug), .{});
-        bug_step.dependOn(&cmd.step);
-    }
-
-    const bench_step = b.step("bench", "Run all benchmarks");
-    inline for (.{
-        .ping_pongs,
-        .ping_pongs_uring,
-        .flow,
-        .flow_uring,
-        .aio_nops,
-        .coro_nops,
-        .fs,
-        .spawn_managed,
-        .spawn_unmanaged,
-    }) |bench| {
-        const exe = b.addExecutable(.{
-            .name = @tagName(bench),
-            .root_source_file = b.path("bench/" ++ @tagName(bench) ++ ".zig"),
-            .target = target,
-            .optimize = .ReleaseFast,
-            .sanitize_thread = sanitize,
-            .single_threaded = single_threaded,
-            .strip = false,
-        });
-        exe.root_module.addImport("aio", aio);
-        exe.root_module.addImport("coro", coro);
-        const install = b.addInstallArtifact(exe, .{ .dest_dir = .{ .override = .{ .custom = "bench" } } });
-        b.getInstallStep().dependOn(&install.step);
-        var cmd = makeRunStep(b, target, exe, "bench:" ++ @tagName(bench), "Run " ++ @tagName(bench) ++ " benchmark", .{});
-        bench_step.dependOn(&cmd.step);
     }
 }
 
@@ -195,4 +79,57 @@ fn makeRunStep(b: *std.Build, target: std.Build.ResolvedTarget, step: *std.Build
     const run = b.step(name, description);
     run.dependOn(&cmd.step);
     return cmd;
+}
+
+// All dependencies that are BUILT need to be declared here
+// This is to avoid conflicts which will occur when building the same project twice
+const Dependencies = struct {
+    zigwin32: ?*std.Build.Module,
+
+    debug: bool,
+};
+
+pub fn buildModule(
+    target_build: *std.Build,
+    aio_build: *std.Build,
+    dependencies: Dependencies,
+    optimize: std.builtin.OptimizeMode,
+    target: std.Build.ResolvedTarget,
+) !*std.Build.Module {
+    _ = target_build;
+    var aio_opts = aio_build.addOptions();
+    {
+        aio_opts.addOption(bool, "debug", dependencies.debug);
+
+        const PosixMode = enum { auto, force, disable };
+        aio_opts.addOption(PosixMode, "posix", PosixMode.auto);
+
+        const WasiMode = enum { wasi, wasix };
+        aio_opts.addOption(WasiMode, "wasi", WasiMode.wasi);
+    }
+
+    const minilib = aio_build.addModule("minilib", .{
+        .root_source_file = aio_build.path("src/minilib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const aio = aio_build.addModule("aio", .{
+        .root_source_file = aio_build.path("src/aio.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = switch (target.query.os_tag orelse builtin.os.tag) {
+            .windows => true,
+            .freebsd, .openbsd, .dragonfly, .netbsd => true,
+            else => false,
+        },
+    });
+    aio.addImport("minilib", minilib);
+    aio.addImport("build_options", aio_opts.createModule());
+
+    if (dependencies.zigwin32) |zw| {
+        aio.addImport("win32", zw);
+    }
+
+    return aio;
 }
