@@ -378,7 +378,7 @@ fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
         // I need to play this with more later, and if there's no single answer
         // then it might be better to be exposed as a tunable.
         // std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_DEFER_TASKRUN, // 6.1
-        std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_COOP_TASKRUN, // 6.0
+        std.os.linux.IORING_SETUP_COOP_TASKRUN, // 6.0
         std.os.linux.IORING_SETUP_COOP_TASKRUN, // 5.9
         0, // 5.4
     };
@@ -396,6 +396,7 @@ fn uring_queue(io: *std.os.linux.IoUring, comptime op_type: Operation, op: Opera
     const Trash = struct {
         var u_64: u64 align(1) = undefined;
     };
+
     var sqe = switch (op_type) {
         .nop => try io.nop(user_data),
         .poll => try io.poll_add(user_data, op.fd, @intCast(@as(u16, @bitCast(op.events)))),
