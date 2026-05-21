@@ -511,9 +511,11 @@ pub fn uringlator_cancel(self: *@This(), id: aio.Id, op_type: Operation, err: Op
     switch (op_type) {
         .read, .write => {
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
-            if (io.CancelIoEx(ovl.owned.handle, &ovl.overlapped) != 0) {
-                self.uringlator.finish(self, id, err, .thread_unsafe);
-                return true;
+            if (ovl.owned == .handle) {
+                if (io.CancelIoEx(ovl.owned.handle, &ovl.overlapped) != 0) {
+                    self.uringlator.finish(self, id, err, .thread_unsafe);
+                    return true;
+                }
             }
             return false;
         },
