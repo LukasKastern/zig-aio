@@ -279,6 +279,8 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
         .read => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            ovl.* = .{};
+
             const flags = try getHandleAccessInfo(state.read.file.handle);
             if (flags.FILE_READ_DATA != 1) return self.uringlator.finish(self, id, error.NotOpenForReading, .thread_unsafe);
             // const h = fs.ReOpenFile(state.read.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
@@ -292,9 +294,79 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
                 self.uringlator.finish(self, id, error.Success, .thread_unsafe);
             }
         },
+        .connect => {
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            ovl.* = .{};
+
+            const ws2_32 = win_sock;
+
+            // GUID for ConnectEx
+            const WSAID_CONNECTEX = std.os.windows.GUID{
+                .Data1 = 0x25a207b9,
+                .Data2 = 0xddf3,
+                .Data3 = 0x4660,
+                .Data4 = [_]u8{ 0x8e, 0xe9, 0x76, 0xe5, 0x8c, 0x74, 0x06, 0x3e },
+            };
+
+            var connect_ex: win_sock.LPFN_CONNECTEX = undefined;
+            var bytes: std.os.windows.DWORD = 0;
+            const rc = ws2_32.WSAIoctl(
+                state.connect.socket,
+                ws2_32.SIO_GET_EXTENSION_FUNCTION_POINTER,
+                @constCast(&WSAID_CONNECTEX),
+                @sizeOf(std.os.windows.GUID),
+                @ptrCast(&connect_ex),
+                @sizeOf(win_sock.LPFN_CONNECTEX),
+                &bytes,
+                null,
+                null,
+            );
+
+            // Async connect not supported :(
+            if (rc != 0) {
+                const result = self.uringlator.ops.getOne(.out_result, id);
+                if (single_threaded) {
+                    self.blockingPosixExecutor(.connect, state.toOp(.connect, result), id, .thread_unsafe);
+                } else {
+                    try self.posix_pool.spawn(blockingPosixExecutor, .{ self, .connect, state.toOp(.connect, result), id, .thread_safe });
+                }
+
+                return;
+            }
+
+            // Bind the socket
+            {
+                var addr = std.net.Address.initIp4(.{ 0, 0, 0, 0 }, 0);
+
+                if (std.os.windows.ws2_32.bind(
+                    state.connect.socket,
+                    @ptrCast(&addr.any),
+                    @intCast(addr.getOsSockLen()),
+                ) == std.os.windows.ws2_32.SOCKET_ERROR) {
+                    return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+                }
+            }
+
+            self.iocp.associateSocket(id, state.connect.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            const ret = wtry(connect_ex(
+                state.connect.socket,
+                @ptrCast(state.connect.addr),
+                @intCast(state.connect.addrlen),
+                null,
+                0,
+                null,
+                &ovl.overlapped,
+            ) == 1) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            if (ret) {
+                self.uringlator.finish(self, id, error.Success, .thread_unsafe);
+            }
+        },
         .write => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            ovl.* = .{};
+
             // const flags = try getHandleAccessInfo(state.write.file.handle);
             // if (flags.FILE_WRITE_DATA != 1) return self.uringlator.finish(self, id, error.NotOpenForWriting, .thread_unsafe);
             // const h = fs.ReOpenFile(state.write.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
@@ -313,6 +385,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const win_state = self.uringlator.ops.getOnePtr(.win_state, id);
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            ovl.* = .{};
             self.iocp.associateSocket(id, state.accept.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             out_socket.* = aio.socket(std.posix.AF.INET, 0, 0) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             var read: u32 = undefined;
@@ -325,6 +398,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const win_state = self.uringlator.ops.getOnePtr(.win_state, id);
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            ovl.* = .{};
             self.iocp.associateSocket(id, state.recv.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             switch (wposix.recvEx(state.recv.socket, &win_state.wsabuf, 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
@@ -338,6 +412,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const win_state = self.uringlator.ops.getOnePtr(.win_state, id);
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            ovl.* = .{};
             self.iocp.associateSocket(id, state.send.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             switch (wposix.sendEx(state.send.socket, &win_state.wsabuf, 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
@@ -350,6 +425,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
         .recv_msg => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            ovl.* = .{};
             self.iocp.associateSocket(id, state.recv_msg.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             switch (wposix.recvmsgEx(state.recv_msg.socket, state.recv_msg.out_msg, 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
@@ -362,6 +438,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
         .send_msg => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            ovl.* = .{};
             self.iocp.associateSocket(id, state.send_msg.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             switch (wposix.sendmsgEx(state.send_msg.socket, @constCast(state.send_msg.msg), 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
@@ -382,6 +459,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
         .child_exit => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            ovl.* = .{};
             const job = win32.system.job_objects.CreateJobObjectW(null, null);
             _ = wtry(job != null and job.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             errdefer checked(CloseHandle(job.?));
@@ -439,7 +517,7 @@ pub fn uringlator_cancel(self: *@This(), id: aio.Id, op_type: Operation, err: Op
             }
             return false;
         },
-        inline .accept, .recv, .send, .send_msg, .recv_msg => |tag| {
+        inline .connect, .accept, .recv, .send, .send_msg, .recv_msg => |tag| {
             const result = self.uringlator.ops.getOne(.out_result, id);
             const op = self.uringlator.ops.getOnePtr(.state, id).toOp(tag, result);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
@@ -450,8 +528,8 @@ pub fn uringlator_cancel(self: *@This(), id: aio.Id, op_type: Operation, err: Op
             return false;
         },
         .child_exit => {
-            var ovl = self.uringlator.ops.getOnePtr(.ovl, id);
-            ovl.deinit();
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            _ = ovl; // autofix
             self.uringlator.finish(self, id, err, .thread_unsafe);
             return true;
         },
