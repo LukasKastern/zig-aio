@@ -463,6 +463,12 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const job = win32.system.job_objects.CreateJobObjectW(null, null);
             _ = wtry(job != null and job.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             errdefer checked(CloseHandle(job.?));
+
+            // Allow breaakway
+            var info = std.mem.zeroes(win32.system.job_objects.JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
+            info.BasicLimitInformation.LimitFlags = win32.system.job_objects.JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+            _ = win32.system.job_objects.SetInformationJobObject(job.?, win32.system.job_objects.JobObjectExtendedLimitInformation, &info, @sizeOf(@TypeOf(info)));
+
             _ = wtry(win32.system.job_objects.AssignProcessToJobObject(job.?, state.child_exit.child)) catch return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
             const key: Iocp.Key = .{ .type = .child_exit, .id = id };
             var assoc: win32.system.job_objects.JOBOBJECT_ASSOCIATE_COMPLETION_PORT = .{
